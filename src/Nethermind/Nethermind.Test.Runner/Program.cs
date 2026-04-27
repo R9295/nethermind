@@ -47,6 +47,9 @@ internal class Program
 
         public static Option<bool> EnableWarmup { get; } =
             new("--warmup", "-wu") { Description = "Enable warmup for benchmarking purposes." };
+
+        public static Option<string> SharedMemoryFile { get; } =
+            new("--shared-memory-file") { Description = "Run as a long-lived server: poll <file>.signal for START/EXIT, read test from <file>, write state root or error back, then write OK/FAIL to <file>.signal." };
     }
 
     public static async Task<int> Main(params string[] args)
@@ -64,6 +67,7 @@ internal class Program
             Options.Stdin,
             Options.GnosisTest,
             Options.EnableWarmup,
+            Options.SharedMemoryFile,
         ];
         rootCommand.SetAction(Run);
 
@@ -85,6 +89,13 @@ internal class Program
         if (parseResult.GetValue(Options.Stdin))
             input = Console.ReadLine();
         ulong chainId = parseResult.GetValue(Options.GnosisTest) ? GnosisSpecProvider.Instance.ChainId : MainnetSpecProvider.Instance.ChainId;
+
+        string sharedMemoryFile = parseResult.GetValue(Options.SharedMemoryFile);
+        if (!string.IsNullOrEmpty(sharedMemoryFile))
+        {
+            new SharedMemoryStateTestServer(sharedMemoryFile, chainId).Run(cancellationToken);
+            return 0;
+        }
 
 
         while (!string.IsNullOrWhiteSpace(input))
