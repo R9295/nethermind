@@ -4,10 +4,12 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text.Json;
 using System.Threading;
 using Ethereum.Test.Base;
 using Nethermind.Core;
 using Nethermind.Core.Crypto;
+using Nethermind.Core.Extensions;
 using Nethermind.Evm;
 using Nethermind.Evm.Tracing;
 using Nethermind.Evm.TransactionProcessing;
@@ -18,7 +20,8 @@ namespace Nethermind.Test.Runner;
 /// <summary>
 /// Long-lived state-test server. Polls a sibling .signal file for START/EXIT,
 /// runs the state test in <see cref="_dataPath"/>, and writes the bare hex
-/// state root (or error string) back, plus OK/FAIL to the signal file.
+/// state root, logs hash, and unique stack witness values (or error string)
+/// back, plus OK/FAIL to the signal file.
 /// </summary>
 internal sealed class SharedMemoryStateTestServer : GeneralStateTestBase
 {
@@ -65,8 +68,8 @@ internal sealed class SharedMemoryStateTestServer : GeneralStateTestBase
     {
         try
         {
-            (Hash256 root, Hash256 logsHash) = ExecuteCurrentTest();
-            AtomicWrite(_dataPath, root.ToString() + "\n" + logsHash.ToString() + "\n");
+            (Hash256 root, Hash256 logsHash, string stackWitnessJson) = ExecuteCurrentTest();
+            AtomicWrite(_dataPath, root.ToString() + "\n" + logsHash.ToString() + "\n" + stackWitnessJson + "\n");
             AtomicWrite(_signalPath, SignalOk);
         }
         catch (Exception e)
@@ -76,7 +79,7 @@ internal sealed class SharedMemoryStateTestServer : GeneralStateTestBase
         }
     }
 
-    private (Hash256 stateRoot, Hash256 logsHash) ExecuteCurrentTest()
+    private (Hash256 stateRoot, Hash256 logsHash, string stackWitnessJson) ExecuteCurrentTest()
     {
         if (!File.Exists(_dataPath))
         {
@@ -88,35 +91,40 @@ internal sealed class SharedMemoryStateTestServer : GeneralStateTestBase
 
         Hash256? agreedRoot = null;
         Hash256? agreedLogs = null;
+        string? agreedStackWitness = null;
         int matched = 0;
         foreach (GeneralStateTest test in tests)
         {
             test.ChainId = _chainId;
-            LogsCollectorTracer tracer = new();
+            LogsAndStackCollectorTracer tracer = new();
             EthereumTestResult result = RunTest(test, tracer);
             if (result.LoadFailure is not null)
             {
                 throw new InvalidDataException(result.LoadFailure);
             }
             Hash256 logsHash = HashLogs(tracer.Logs);
+            string stackWitnessJson = tracer.StackWitnessJson;
             if (agreedRoot is null)
             {
                 agreedRoot = result.StateRoot;
                 agreedLogs = logsHash;
+                agreedStackWitness = stackWitnessJson;
             }
-            else if (!agreedRoot.Equals(result.StateRoot) || !agreedLogs!.Equals(logsHash))
+            else if (!agreedRoot.Equals(result.StateRoot)
+                || !agreedLogs!.Equals(logsHash)
+                || !string.Equals(agreedStackWitness, stackWitnessJson, StringComparison.Ordinal))
             {
                 throw new InvalidOperationException(
-                    "multiple subtests with differing roots — please filter input");
+                    "multiple subtests with differing outputs — please filter input");
             }
             matched++;
         }
 
-        if (matched == 0 || agreedRoot is null || agreedLogs is null)
+        if (matched == 0 || agreedRoot is null || agreedLogs is null || agreedStackWitness is null)
         {
             throw new InvalidOperationException("no matching subtest");
         }
-        return (agreedRoot, agreedLogs);
+        return (agreedRoot, agreedLogs, agreedStackWitness);
     }
 
     private static Hash256 HashLogs(LogEntry[] logs)
@@ -125,17 +133,32 @@ internal sealed class SharedMemoryStateTestServer : GeneralStateTestBase
         return Keccak.Compute(encoded.Bytes);
     }
 
-    private sealed class LogsCollectorTracer : TxTracer
+    private sealed class LogsAndStackCollectorTracer : TxTracer
     {
+        private readonly SortedSet<string> _stackValues = new(StringComparer.Ordinal);
         public LogEntry[] Logs { get; private set; } = [];
+        public string StackWitnessJson => JsonSerializer.Serialize(_stackValues);
 
-        public LogsCollectorTracer() => IsTracingReceipt = true;
+        public LogsAndStackCollectorTracer()
+        {
+            IsTracingReceipt = true;
+            IsTracingInstructions = true;
+            IsTracingStack = true;
+        }
 
         public override void MarkAsSuccess(Address recipient, in GasConsumed gasSpent, byte[] output, LogEntry[] logs, Hash256? stateRoot = null) =>
             Logs = logs ?? [];
 
         public override void MarkAsFailed(Address recipient, in GasConsumed gasSpent, byte[] output, string? error, Hash256? stateRoot = null) =>
             Logs = [];
+
+        public override void SetOperationStack(TraceStack stack)
+        {
+            for (int i = 0; i < stack.Count; i++)
+            {
+                _stackValues.Add(stack[i].Span.ToHexString(withZeroX: true, noLeadingZeros: false));
+            }
+        }
     }
 
     private string ReadSignal()
