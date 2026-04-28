@@ -49,7 +49,7 @@ internal class Program
             new("--warmup", "-wu") { Description = "Enable warmup for benchmarking purposes." };
 
         public static Option<string> SharedMemoryFile { get; } =
-            new("--shared-memory-file") { Description = "Run as a long-lived server: poll <file>.signal for START/EXIT, read test from <file>, write state root or error back, then write OK/FAIL to <file>.signal." };
+            new("--shared-memory-file") { Description = "Run as a long-lived server: poll <file>.signal for START/EXIT, read a test from <file>, write oracle output or error back, then write OK/FAIL to <file>.signal. Uses state-test mode by default, or block-test mode when --blockTest is set." };
     }
 
     public static async Task<int> Main(params string[] args)
@@ -93,7 +93,14 @@ internal class Program
         string sharedMemoryFile = parseResult.GetValue(Options.SharedMemoryFile);
         if (!string.IsNullOrEmpty(sharedMemoryFile))
         {
-            new SharedMemoryStateTestServer(sharedMemoryFile, chainId).Run(cancellationToken);
+            if (parseResult.GetValue(Options.BlockTest))
+            {
+                new SharedMemoryBlockTestServer(sharedMemoryFile, chainId).Run(cancellationToken);
+            }
+            else
+            {
+                new SharedMemoryStateTestServer(sharedMemoryFile, chainId).Run(cancellationToken);
+            }
             return 0;
         }
 

@@ -2,8 +2,11 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 using System;
+using System.Runtime.CompilerServices;
 using Nethermind.Consensus;
 using Nethermind.Core;
+
+[assembly: InternalsVisibleTo("nethtest")]
 
 namespace Ethereum.Test.Base;
 

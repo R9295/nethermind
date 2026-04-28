@@ -11,6 +11,7 @@ using Nethermind.Int256;
 [assembly: InternalsVisibleTo("Ethereum.Test.Base")]
 [assembly: InternalsVisibleTo("Ethereum.Difficulty.Test")]
 [assembly: InternalsVisibleTo("Evm")]
+[assembly: InternalsVisibleTo("nethtest")]
 
 namespace Nethermind.Consensus.Ethash
 {
